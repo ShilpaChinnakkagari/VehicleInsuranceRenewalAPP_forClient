@@ -90,11 +90,27 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
     }
   }
 
+  void _clearForm() {
+    _nameController.clear();
+    _emailController.clear();
+    _mobileController.clear();
+    _regNoController.clear();
+    _chassisNoController.clear();
+    _doorNoController.clear();
+    _streetController.clear();
+    _districtController.clear();
+    _stateController.clear();
+    setState(() {
+      _issueDate = null;
+      _renewalDate = null;
+    });
+  }
+
   Future<void> _saveCustomer() async {
     if (!_formKey.currentState!.validate()) return;
     if (_renewalDate == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select renewal date')),
+        const SnackBar(content: Text('Please select renewal date'), backgroundColor: Colors.orange),
       );
       return;
     }
@@ -114,6 +130,8 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
       'district': _districtController.text.isNotEmpty ? _districtController.text : null,
       'state': _stateController.text.isNotEmpty ? _stateController.text : null,
       'country': 'India',
+      'status': 'pending',
+      'created_at': FieldValue.serverTimestamp(),
     };
 
     try {
@@ -122,32 +140,37 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
             .collection('customers')
             .doc(widget.existingCustomer!.id)
             .update(customerData);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Customer updated successfully'), backgroundColor: Colors.green),
-          );
-        }
       } else {
-        await _firestoreService.addCustomer(customerData);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Customer added successfully'), backgroundColor: Colors.green),
-          );
-        }
+        await FirebaseFirestore.instance
+            .collection('customers')
+            .add(customerData);
       }
-      if (mounted) {
-        Navigator.pop(context, true);
-      }
+
+      if (!mounted) return;
+
+      // Show success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(widget.isEditing ? 'Customer updated successfully' : 'Customer added successfully'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 1),
+        ),
+      );
+
+      // Clear form and stay on same screen
+      _clearForm();
+      
+      setState(() {
+        _isSaving = false;
+      });
+
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to save customer'), backgroundColor: Colors.red),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isSaving = false);
-      }
+      if (!mounted) return;
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: ${e.toString()}'), backgroundColor: Colors.red),
+      );
+      setState(() => _isSaving = false);
     }
   }
 

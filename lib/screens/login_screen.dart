@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import '../services/firestore_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -13,63 +12,44 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false;
   String? _errorMessage;
-  final _firestoreService = FirestoreService();
 
   Future<void> _signInWithGoogle() async {
     if (!mounted) return;
-    
+
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
 
     try {
+      // Step 1: Google Sign In
       final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+      
       if (googleUser == null) {
-        if (mounted) setState(() => _isLoading = false);
+        setState(() => _isLoading = false);
         return;
       }
 
-      final GoogleSignInAuthentication googleAuth = 
+      // Step 2: Get auth details
+      final GoogleSignInAuthentication googleAuth =
           await googleUser.authentication;
 
+      // Step 3: Create credential
       final credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
 
-      final userCredential = await FirebaseAuth.instance.signInWithCredential(credential);
-      final user = userCredential.user;
+      // Step 4: Sign in to Firebase (NO ADMIN CHECK)
+      await FirebaseAuth.instance.signInWithCredential(credential);
 
-      if (user != null && mounted) {
-        print('✅ User signed in: ${user.email}');
-        
-        final isAdmin = await _firestoreService.isAdmin(user.email!);
-        print('✅ Is admin: $isAdmin');
-        
-        if (!isAdmin && mounted) {
-          print('❌ Not admin - signing out');
-          await FirebaseAuth.instance.signOut();
-          await GoogleSignIn().signOut();
-          setState(() {
-            _errorMessage = 'This email is not authorized as admin';
-            _isLoading = false;
-          });
-          return;
-        }
-        print('✅ Admin verified - showing dashboard');
-      }
-      
-      if (mounted) setState(() => _isLoading = false);
-      
+      // If successful, StreamBuilder in main.dart will redirect to Dashboard
+
     } catch (e) {
-      print('❌ Login error: $e');
-      if (mounted) {
-        setState(() {
-          _errorMessage = 'Failed to sign in. Please try again.';
-          _isLoading = false;
-        });
-      }
+      setState(() {
+        _errorMessage = 'Failed to sign in. Please try again.';
+        _isLoading = false;
+      });
     }
   }
 
@@ -182,7 +162,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           'https://www.google.com/favicon.ico',
                           height: 24,
                           width: 24,
-                          errorBuilder: (context, error, stackTrace) => 
+                          errorBuilder: (context, error, stackTrace) =>
                               const Icon(Icons.android, color: Colors.black),
                         ),
                         label: _isLoading
@@ -200,7 +180,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        'Only authorized admins can access',
+                        'Google Login Only',
                         style: TextStyle(
                           color: Colors.grey.shade600,
                           fontSize: 12,

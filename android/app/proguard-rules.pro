@@ -6,18 +6,18 @@
 -keep class io.flutter.**  { *; }
 -keep class io.flutter.plugins.**  { *; }
 
-# Google Sign-In
--keep class com.google.android.gms.** { *; }
+# Firebase
 -keep class com.google.firebase.** { *; }
+-keep class com.google.android.gms.** { *; }
 
-# Drive API
--keep class com.google.api.** { *; }
--keep class com.google.api.client.** { *; }
+# Play Core
+-keep class com.google.android.play.core.** { *; }
 
-# Keep generic signatures
+# Keep all classes that might be referenced via reflection
 -keepattributes Signature
+-keepattributes *Annotation*
+-keepattributes EnclosingMethod
+-keepattributes InnerClasses
 
-# Keep Parcelable
--keep class * implements android.os.Parcelable {
-  public static final android.os.Parcelable$Creator *;
-}
+-dontwarn com.google.android.play.core.**
+-dontwarn com.google.firebase.**

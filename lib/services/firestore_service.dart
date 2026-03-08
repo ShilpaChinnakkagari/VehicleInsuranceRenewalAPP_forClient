@@ -6,21 +6,12 @@ class FirestoreService {
   // Check if user is admin
   Future<bool> isAdmin(String email) async {
     try {
-      print('🔍 Checking admin for: $email');
       final query = await _db
           .collection('admin_users')
           .where('email', isEqualTo: email)
-          .limit(1)
           .get();
-      
-      print('🔍 Found ${query.docs.length} admin docs');
-      if (query.docs.isNotEmpty) {
-        print('🔍 Admin doc data: ${query.docs.first.data()}');
-      }
-      
       return query.docs.isNotEmpty;
     } catch (e) {
-      print('🔍 Admin check error: $e');
       return false;
     }
   }
@@ -38,7 +29,7 @@ class FirestoreService {
     await _db.collection('customers').add({
       ...data,
       'created_at': FieldValue.serverTimestamp(),
-      'status': 'not_contacted',
+      'status': 'pending',
     });
   }
 

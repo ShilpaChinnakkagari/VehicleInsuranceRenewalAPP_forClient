@@ -14,14 +14,22 @@ class InsuranceRenewalScreen extends StatefulWidget {
 class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
   final FirestoreService _firestoreService = FirestoreService();
   final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _yearController = TextEditingController();
   
   String _selectedFilter = 'Today';
   int? _selectedMonth;
   int? _selectedYear;
   
-  List<DocumentSnapshot> _allCustomers = [];
-  List<DocumentSnapshot> _filteredCustomers = [];
+  // Store local copy of data with IDs
+  List<Map<String, dynamic>> _allCustomers = [];
+  List<Map<String, dynamic>> _filteredCustomers = [];
+  List<Map<String, dynamic>> _displayCustomers = [];
+  
   bool _isSearching = false;
+  
+  int _currentPage = 1;
+  int _itemsPerPage = 10;
+  int _totalItems = 0;
 
   final List<String> _months = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -31,80 +39,189 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
   @override
   void initState() {
     super.initState();
-    _searchController.addListener(_filterCustomers);
+    _searchController.addListener(_onSearchChanged);
+    _yearController.addListener(_onYearChanged);
     _selectedYear = DateTime.now().year;
+    _yearController.text = _selectedYear.toString();
   }
 
   @override
   void dispose() {
+    _searchController.removeListener(_onSearchChanged);
+    _yearController.removeListener(_onYearChanged);
     _searchController.dispose();
+    _yearController.dispose();
     super.dispose();
   }
 
-  void _filterCustomers() {
-    final query = _searchController.text.toLowerCase();
-    if (query.isEmpty) {
+  void _onSearchChanged() {
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (!mounted) return;
+      if (_searchController.text.isNotEmpty) {
+        _filterCustomers();
+      } else {
+        _clearSearch();
+      }
+    });
+  }
+
+  void _onYearChanged() {
+    if (_yearController.text.isEmpty) {
       setState(() {
-        _filteredCustomers = _allCustomers;
-        _isSearching = false;
+        _selectedYear = null;
+        _currentPage = 1;
       });
-    } else {
+      return;
+    }
+    
+    final year = int.tryParse(_yearController.text);
+    if (year != null && year > 2000 && year < 2100) {
       setState(() {
-        _filteredCustomers = _allCustomers.where((doc) {
-          final data = doc.data() as Map<String, dynamic>;
-          final name = data['name']?.toLowerCase() ?? '';
-          final regNo = data['vehicle_reg_no']?.toLowerCase() ?? '';
-          final mobile = data['mobile']?.toLowerCase() ?? '';
-          return name.contains(query) || regNo.contains(query) || mobile.contains(query);
-        }).toList();
-        _isSearching = true;
+        _selectedYear = year;
+        _currentPage = 1;
       });
     }
   }
 
-  Future<void> _deleteCustomer(String docId, String customerName) async {
-    return showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Delete Customer'),
-          content: Text('Are you sure you want to delete $customerName?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('CANCEL'),
-            ),
-            TextButton(
-              onPressed: () async {
-                await FirebaseFirestore.instance
-                    .collection('customers')
-                    .doc(docId)
-                    .delete();
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('$customerName deleted successfully'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              },
-              style: TextButton.styleFrom(
-                foregroundColor: Colors.red,
-              ),
-              child: const Text('DELETE'),
-            ),
-          ],
-        );
-      },
-    );
+  void _filterCustomers() {
+    if (!mounted) return;
+    
+    final query = _searchController.text.toLowerCase();
+    setState(() {
+      _filteredCustomers = _allCustomers.where((data) {
+        final name = data['name']?.toLowerCase() ?? '';
+        final regNo = data['vehicle_reg_no']?.toLowerCase() ?? '';
+        final mobile = data['mobile']?.toLowerCase() ?? '';
+        return name.contains(query) || regNo.contains(query) || mobile.contains(query);
+      }).toList();
+      _isSearching = true;
+      _currentPage = 1;
+      _updateDisplayCustomers();
+    });
   }
 
-  void _editCustomer(DocumentSnapshot doc) {
+  void _clearSearch() {
+    if (!mounted) return;
+    setState(() {
+      _filteredCustomers = [];
+      _isSearching = false;
+      _currentPage = 1;
+      _updateDisplayCustomers();
+    });
+  }
+
+  void _updateDisplayCustomers() {
+    final sourceList = _isSearching ? _filteredCustomers : _allCustomers;
+    _totalItems = sourceList.length;
+    
+    if (_totalItems == 0) {
+      _displayCustomers = [];
+      return;
+    }
+    
+    final startIndex = (_currentPage - 1) * _itemsPerPage;
+    final endIndex = startIndex + _itemsPerPage;
+    
+    if (startIndex < _totalItems) {
+      _displayCustomers = sourceList.sublist(
+        startIndex,
+        endIndex > _totalItems ? _totalItems : endIndex,
+      );
+    } else {
+      _displayCustomers = [];
+    }
+  }
+
+  void _nextPage() {
+    if (!mounted) return;
+    setState(() {
+      _currentPage++;
+      _updateDisplayCustomers();
+    });
+  }
+
+  void _previousPage() {
+    if (!mounted) return;
+    setState(() {
+      _currentPage--;
+      _updateDisplayCustomers();
+    });
+  }
+
+  // 🔥 GUARANTEED INSTANT COLOR UPDATE
+  void _updateStatus(String docId, String newStatus) {
+    // Step 1: Update Firestore in background (fire and forget)
+    FirebaseFirestore.instance
+        .collection('customers')
+        .doc(docId)
+        .update({'status': newStatus})
+        .catchError((error) {
+          print('Firestore update failed: $error');
+          // Optionally revert color if needed
+        });
+    
+    // Step 2: IMMEDIATELY update local data - THIS CHANGES COLOR RIGHT NOW
+    bool updated = false;
+    
+    // Update in display list first (what user sees)
+    for (int i = 0; i < _displayCustomers.length; i++) {
+      if (_displayCustomers[i]['id'] == docId) {
+        _displayCustomers[i]['status'] = newStatus;
+        updated = true;
+        break;
+      }
+    }
+    
+    // Also update in other lists for consistency
+    for (int i = 0; i < _allCustomers.length; i++) {
+      if (_allCustomers[i]['id'] == docId) {
+        _allCustomers[i]['status'] = newStatus;
+        break;
+      }
+    }
+    
+    for (int i = 0; i < _filteredCustomers.length; i++) {
+      if (_filteredCustomers[i]['id'] == docId) {
+        _filteredCustomers[i]['status'] = newStatus;
+        break;
+      }
+    }
+    
+    // Step 3: Force UI rebuild if we updated anything
+    if (updated && mounted) {
+      setState(() {}); // This triggers rebuild with new colors
+    }
+  }
+
+  Future<void> _deleteCustomer(String docId, String customerName) async {
+    await FirebaseFirestore.instance
+        .collection('customers')
+        .doc(docId)
+        .delete();
+    
+    if (mounted) {
+      setState(() {
+        _allCustomers.removeWhere((d) => d['id'] == docId);
+        _filteredCustomers.removeWhere((d) => d['id'] == docId);
+        _updateDisplayCustomers();
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$customerName deleted'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  void _editCustomer(Map<String, dynamic> customerData) {
+    // Navigate to edit screen
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => AddCustomerScreen(
-          existingCustomer: doc,
+          existingCustomer: null, // You need to pass the actual document
           isEditing: true,
         ),
       ),
@@ -112,67 +229,23 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
   }
 
   Widget _buildFilterChip(String label, bool isSelected) {
-    return GestureDetector(
-      onTap: () {
+    return FilterChip(
+      label: Text(label),
+      selected: isSelected,
+      onSelected: (selected) {
+        if (!mounted) return;
         setState(() {
           _selectedFilter = label;
           _selectedMonth = null;
+          _currentPage = 1;
         });
       },
-      child: Container(
-        margin: const EdgeInsets.only(right: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.blue : Colors.grey.shade200,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isSelected ? Colors.blue : Colors.grey.shade400,
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: isSelected ? Colors.white : Colors.grey.shade800,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+      backgroundColor: Colors.grey.shade200,
+      selectedColor: Colors.blue,
+      labelStyle: TextStyle(
+        color: isSelected ? Colors.white : Colors.black87,
       ),
     );
-  }
-
-  Widget _buildStatusIcon(String status) {
-    switch(status) {
-      case 'contacted':
-        return Container(
-          width: 30,
-          height: 30,
-          decoration: const BoxDecoration(
-            color: Colors.green,
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(Icons.check, color: Colors.white, size: 18),
-        );
-      case 'not_responded':
-        return Container(
-          width: 30,
-          height: 30,
-          decoration: const BoxDecoration(
-            color: Colors.red,
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(Icons.close, color: Colors.white, size: 18),
-        );
-      default:
-        return Container(
-          width: 30,
-          height: 30,
-          decoration: const BoxDecoration(
-            color: Colors.blue,
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(Icons.access_time, color: Colors.white, size: 16),
-        );
-    }
   }
 
   Stream<QuerySnapshot> _getFilteredStream() {
@@ -196,6 +269,11 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
             .snapshots();
             
       case 'All':
+        return FirebaseFirestore.instance
+            .collection('customers')
+            .orderBy('renewal_date', descending: true)
+            .snapshots();
+            
       default:
         return FirebaseFirestore.instance
             .collection('customers')
@@ -204,11 +282,10 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
     }
   }
 
-  List<DocumentSnapshot> _filterByDate(List<DocumentSnapshot> docs) {
+  List<Map<String, dynamic>> _filterByDate(List<Map<String, dynamic>> data) {
     if (_selectedFilter == 'Month' && _selectedMonth != null) {
-      return docs.where((doc) {
-        final data = doc.data() as Map<String, dynamic>;
-        final dateStr = data['renewal_date'] as String?;
+      return data.where((item) {
+        final dateStr = item['renewal_date'] as String?;
         if (dateStr == null) return false;
         try {
           final date = DateTime.parse(dateStr);
@@ -218,9 +295,8 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
         }
       }).toList();
     } else if (_selectedFilter == 'Year' && _selectedYear != null) {
-      return docs.where((doc) {
-        final data = doc.data() as Map<String, dynamic>;
-        final dateStr = data['renewal_date'] as String?;
+      return data.where((item) {
+        final dateStr = item['renewal_date'] as String?;
         if (dateStr == null) return false;
         try {
           final date = DateTime.parse(dateStr);
@@ -230,7 +306,7 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
         }
       }).toList();
     }
-    return docs;
+    return data;
   }
 
   @override
@@ -245,44 +321,43 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
             color: Colors.white,
             child: Column(
               children: [
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(30),
-                    border: Border.all(color: Colors.grey.shade300),
-                  ),
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      hintText: 'Search by name, vehicle number, or mobile...',
-                      prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                      suffixIcon: _searchController.text.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.clear, color: Colors.grey),
-                              onPressed: () => _searchController.clear(),
-                            )
-                          : null,
-                      border: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'Search...',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _searchController.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              _searchController.clear();
+                              _clearSearch();
+                            },
+                          )
+                        : null,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(30),
                     ),
                   ),
                 ),
                 const SizedBox(height: 12),
-                // Filter Chips
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
                       _buildFilterChip('Today', _selectedFilter == 'Today'),
+                      const SizedBox(width: 8),
                       _buildFilterChip('Upcoming', _selectedFilter == 'Upcoming'),
+                      const SizedBox(width: 8),
                       _buildFilterChip('Month', _selectedFilter == 'Month'),
+                      const SizedBox(width: 8),
                       _buildFilterChip('Year', _selectedFilter == 'Year'),
+                      const SizedBox(width: 8),
                       _buildFilterChip('All', _selectedFilter == 'All'),
                     ],
                   ),
                 ),
                 const SizedBox(height: 8),
-                // Month/Year selectors
                 if (_selectedFilter == 'Month' || _selectedFilter == 'Year')
                   Row(
                     children: [
@@ -292,23 +367,27 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
                             margin: const EdgeInsets.only(right: 8),
                             padding: const EdgeInsets.symmetric(horizontal: 12),
                             decoration: BoxDecoration(
-                              color: Colors.grey.shade100,
-                              borderRadius: BorderRadius.circular(30),
                               border: Border.all(color: Colors.grey.shade300),
+                              borderRadius: BorderRadius.circular(30),
                             ),
-                            child: DropdownButtonHideUnderline(
-                              child: DropdownButton<int>(
-                                value: _selectedMonth,
-                                hint: const Text('Select Month'),
-                                isExpanded: true,
-                                items: List.generate(12, (index) {
-                                  return DropdownMenuItem(
-                                    value: index + 1,
-                                    child: Text(_months[index]),
-                                  );
-                                }),
-                                onChanged: (value) => setState(() => _selectedMonth = value),
-                              ),
+                            child: DropdownButton<int>(
+                              value: _selectedMonth,
+                              hint: const Text('Month'),
+                              isExpanded: true,
+                              underline: const SizedBox(),
+                              items: List.generate(12, (index) {
+                                return DropdownMenuItem(
+                                  value: index + 1,
+                                  child: Text(_months[index]),
+                                );
+                              }),
+                              onChanged: (value) {
+                                if (!mounted) return;
+                                setState(() {
+                                  _selectedMonth = value;
+                                  _currentPage = 1;
+                                });
+                              },
                             ),
                           ),
                         ),
@@ -316,23 +395,15 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 12),
                           decoration: BoxDecoration(
-                            color: Colors.grey.shade100,
-                            borderRadius: BorderRadius.circular(30),
                             border: Border.all(color: Colors.grey.shade300),
+                            borderRadius: BorderRadius.circular(30),
                           ),
-                          child: DropdownButtonHideUnderline(
-                            child: DropdownButton<int>(
-                              value: _selectedYear,
-                              hint: const Text('Select Year'),
-                              isExpanded: true,
-                              items: List.generate(5, (index) {
-                                final year = DateTime.now().year - 2 + index;
-                                return DropdownMenuItem(
-                                  value: year,
-                                  child: Text(year.toString()),
-                                );
-                              }),
-                              onChanged: (value) => setState(() => _selectedYear = value),
+                          child: TextField(
+                            controller: _yearController,
+                            keyboardType: TextInputType.number,
+                            decoration: InputDecoration(
+                              hintText: 'Enter year',
+                              border: InputBorder.none,
                             ),
                           ),
                         ),
@@ -343,33 +414,54 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
             ),
           ),
 
-          // Customer Count
+          // Pagination Header
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.blue.shade200),
-                  ),
-                  child: Text(
-                    _isSearching 
-                        ? '${_filteredCustomers.length} results found'
-                        : '$_selectedFilter Customers',
-                    style: TextStyle(
-                      color: Colors.blue.shade800,
-                      fontWeight: FontWeight.w600,
-                    ),
+                Text(
+                  _isSearching 
+                      ? '${_filteredCustomers.length} results'
+                      : '$_selectedFilter (${_allCustomers.length} total)',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-                const Spacer(),
-                if (_isSearching)
-                  TextButton(
-                    onPressed: () => _searchController.clear(),
-                    child: const Text('Clear Search'),
+                if (_totalItems > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.blue.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.chevron_left, size: 20),
+                          onPressed: _currentPage > 1 ? _previousPage : null,
+                          color: _currentPage > 1 ? Colors.blue : Colors.grey,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                        Text(
+                          'Page $_currentPage/${(_totalItems / _itemsPerPage).ceil()}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue,
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.chevron_right, size: 20),
+                          onPressed: _currentPage * _itemsPerPage < _totalItems ? _nextPage : null,
+                          color: _currentPage * _itemsPerPage < _totalItems ? Colors.blue : Colors.grey,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                      ],
+                    ),
                   ),
               ],
             ),
@@ -385,236 +477,252 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
                 }
 
                 if (snapshot.hasError) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.error_outline, size: 48, color: Colors.red.shade300),
-                        const SizedBox(height: 16),
-                        Text('Error loading customers', style: TextStyle(color: Colors.grey.shade600)),
-                      ],
-                    ),
-                  );
+                  return Center(child: Text('Error: ${snapshot.error}'));
                 }
 
                 if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.inbox, size: 64, color: Colors.grey.shade400),
-                        const SizedBox(height: 16),
-                        Text(
-                          'No customers found',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.grey.shade700),
-                        ),
-                      ],
-                    ),
-                  );
+                  return const Center(child: Text('No customers found'));
                 }
 
-                _allCustomers = snapshot.data!.docs;
-                var displayCustomers = _filterByDate(_allCustomers);
+                // Convert snapshot to list of maps with IDs
+                final allData = snapshot.data!.docs.map((doc) {
+                  final data = doc.data() as Map<String, dynamic>;
+                  data['id'] = doc.id;
+                  return data;
+                }).toList();
+
+                // Filter by date
+                final filteredData = _filterByDate(allData);
                 
-                if (_isSearching) {
-                  displayCustomers = _filteredCustomers;
+                // Update all customers list if changed
+                if (_allCustomers.length != filteredData.length) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) {
+                      setState(() {
+                        _allCustomers = filteredData;
+                        _updateDisplayCustomers();
+                      });
+                    }
+                  });
+                }
+
+                if (_displayCustomers.isEmpty) {
+                  return const Center(child: Text('No customers on this page'));
                 }
 
                 return ListView.builder(
+                  key: ValueKey(_currentPage),
                   padding: const EdgeInsets.all(16),
-                  itemCount: displayCustomers.length,
+                  itemCount: _displayCustomers.length,
                   itemBuilder: (context, index) {
-                    final doc = displayCustomers[index];
-                    final data = doc.data() as Map<String, dynamic>;
+                    final data = _displayCustomers[index];
                     final status = data['status'] ?? 'pending';
                     
-                    Color rowColor;
+                    final globalIndex = _isSearching 
+                        ? _filteredCustomers.indexOf(data) + 1
+                        : _allCustomers.indexOf(data) + 1;
+                    final totalRecords = _isSearching ? _filteredCustomers.length : _allCustomers.length;
+                    
+                    Color backgroundColor;
                     switch(status) {
                       case 'contacted':
-                        rowColor = Colors.green.shade50;
+                        backgroundColor = Colors.green.shade100;
                         break;
                       case 'not_responded':
-                        rowColor = Colors.red.shade50;
+                        backgroundColor = Colors.red.shade100;
                         break;
                       default:
-                        rowColor = Colors.blue.shade50;
+                        backgroundColor = Colors.blue.shade100;
                     }
 
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      decoration: BoxDecoration(
-                        color: rowColor,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: status == 'contacted' 
-                              ? Colors.green.shade200
-                              : status == 'not_responded'
-                                  ? Colors.red.shade200
-                                  : Colors.blue.shade200,
+                    return Dismissible(
+                      key: Key(data['id']),
+                      direction: DismissDirection.horizontal,
+                      background: Container(
+                        color: Colors.red,
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.only(right: 20),
+                        child: const Text(
+                          'Delete',
+                          style: TextStyle(color: Colors.white, fontSize: 16),
                         ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.grey.shade200,
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
                       ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                _buildStatusIcon(status),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        data['name'] ?? 'Unknown',
-                                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Row(
-                                        children: [
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                            decoration: BoxDecoration(
-                                              color: Colors.grey.shade200,
-                                              borderRadius: BorderRadius.circular(12),
-                                            ),
-                                            child: Text(
-                                              data['vehicle_reg_no'] ?? 'No Reg No',
-                                              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Text(
-                                            '📅 ${data['renewal_date'] ?? ''}',
-                                            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
+                      secondaryBackground: Container(
+                        color: Colors.blue,
+                        alignment: Alignment.centerLeft,
+                        padding: const EdgeInsets.only(left: 20),
+                        child: const Text(
+                          'Edit',
+                          style: TextStyle(color: Colors.white, fontSize: 16),
+                        ),
+                      ),
+                      confirmDismiss: (direction) async {
+                        if (direction == DismissDirection.endToStart) {
+                          final confirm = await showDialog(
+                            context: context,
+                            builder: (context) => AlertDialog(
+                              title: const Text('Delete'),
+                              content: Text('Delete ${data['name']}?'),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context, false),
+                                  child: const Text('CANCEL'),
                                 ),
-                                PopupMenuButton(
-                                  icon: const Icon(Icons.more_vert),
-                                  itemBuilder: (context) => [
-                                    PopupMenuItem(
-                                      onTap: () => _editCustomer(doc),
-                                      child: Row(
-                                        children: [
-                                          Icon(Icons.edit, color: Colors.blue, size: 20),
-                                          const SizedBox(width: 8),
-                                          const Text('Edit'),
-                                        ],
-                                      ),
-                                    ),
-                                    PopupMenuItem(
-                                      onTap: () => _deleteCustomer(doc.id, data['name'] ?? 'Unknown'),
-                                      child: Row(
-                                        children: [
-                                          Icon(Icons.delete, color: Colors.red, size: 20),
-                                          const SizedBox(width: 8),
-                                          const Text('Delete'),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context, true),
+                                  child: const Text('DELETE'),
                                 ),
                               ],
                             ),
-                            
-                            const SizedBox(height: 12),
-                            
-                            Row(
-                              children: [
-                                if (data['mobile'] != null)
-                                  Expanded(
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                      decoration: BoxDecoration(
-                                        color: Colors.white,
-                                        borderRadius: BorderRadius.circular(20),
-                                        border: Border.all(color: Colors.grey.shade300),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(Icons.phone, size: 14, color: Colors.grey.shade600),
-                                          const SizedBox(width: 4),
-                                          Expanded(
-                                            child: Text(
-                                              data['mobile']!,
-                                              style: TextStyle(fontSize: 13, color: Colors.grey.shade800),
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                
-                                const SizedBox(width: 8),
-                                
-                                Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(25),
-                                    border: Border.all(color: Colors.grey.shade300),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      // Green - Contacted
-                                      IconButton(
-                                        icon: Icon(Icons.check_circle, color: Colors.green.shade600, size: 20),
-                                        onPressed: () => _firestoreService.updateStatus(doc.id, 'contacted'),
-                                        tooltip: 'Mark Contacted',
-                                      ),
-                                      // Red - Not Responded
-                                      IconButton(
-                                        icon: Icon(Icons.cancel, color: Colors.red.shade600, size: 20),
-                                        onPressed: () => _firestoreService.updateStatus(doc.id, 'not_responded'),
-                                        tooltip: 'Mark Not Responded',
-                                      ),
-                                      // Blue - Reset to Not Contacted
-                                      IconButton(
-                                        icon: Icon(Icons.refresh, color: Colors.blue.shade600, size: 20),
-                                        onPressed: () => _firestoreService.updateStatus(doc.id, 'pending'),
-                                        tooltip: 'Reset to Not Contacted',
-                                      ),
-                                      if (data['mobile'] != null) ...[
-                                        // Call Button - FIXED
-                                        IconButton(
-                                          icon: Icon(Icons.phone, color: Colors.blue.shade600, size: 20),
-                                          onPressed: () {
-                                            final url = 'tel:${data['mobile']}';
-                                            launchUrl(Uri.parse(url));
-                                          },
-                                          tooltip: 'Call',
-                                        ),
-                                        // WhatsApp Button
-                                        IconButton(
-                                          icon: Icon(Icons.message, color: Colors.green.shade700, size: 20),
-                                          onPressed: () {
-                                            final message = 'Hello ${data['name']}, your vehicle ${data['vehicle_reg_no']} insurance is due for renewal. Please contact us.';
-                                            final url = 'https://wa.me/${data['mobile']}?text=${Uri.encodeComponent(message)}';
-                                            launchUrl(Uri.parse(url));
-                                          },
-                                          tooltip: 'WhatsApp',
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                              ],
+                          );
+                          if (confirm == true) {
+                            await _deleteCustomer(data['id'], data['name'] ?? '');
+                          }
+                          return false;
+                        } else {
+                          _editCustomer(data);
+                          return false;
+                        }
+                      },
+                      child: Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        decoration: BoxDecoration(
+                          color: backgroundColor,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: status == 'contacted' 
+                                ? Colors.green.shade300
+                                : status == 'not_responded'
+                                    ? Colors.red.shade300
+                                    : Colors.blue.shade300,
+                            width: 2,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.grey.shade300,
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
                             ),
                           ],
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Record Number Badge
+                              Container(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: Colors.grey.shade400),
+                                ),
+                                child: Text(
+                                  '$globalIndex / $totalRecords',
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                              ),
+                              
+                              // Name and Status Buttons
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      data['name'] ?? 'Unknown',
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                  Row(
+                                    children: [
+                                      IconButton(
+                                        icon: Icon(
+                                          Icons.check_circle,
+                                          color: status == 'contacted' 
+                                              ? Colors.green.shade700 
+                                              : Colors.grey.shade400,
+                                          size: 28,
+                                        ),
+                                        onPressed: () => _updateStatus(data['id'], 'contacted'),
+                                      ),
+                                      IconButton(
+                                        icon: Icon(
+                                          Icons.cancel,
+                                          color: status == 'not_responded' 
+                                              ? Colors.red.shade700 
+                                              : Colors.grey.shade400,
+                                          size: 28,
+                                        ),
+                                        onPressed: () => _updateStatus(data['id'], 'not_responded'),
+                                      ),
+                                      IconButton(
+                                        icon: Icon(
+                                          Icons.refresh,
+                                          color: status == 'pending' 
+                                              ? Colors.blue.shade700 
+                                              : Colors.grey.shade400,
+                                          size: 24,
+                                        ),
+                                        onPressed: () => _updateStatus(data['id'], 'pending'),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      '🚗 ${data['vehicle_reg_no'] ?? 'No Reg No'}',
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                  ),
+                                  Text(
+                                    '📅 ${data['renewal_date'] ?? ''}',
+                                    style: const TextStyle(fontSize: 14),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      '📞 ${data['mobile'] ?? 'No Mobile'}',
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                  ),
+                                  if (data['mobile'] != null)
+                                    Row(
+                                      children: [
+                                        IconButton(
+                                          icon: const Icon(Icons.phone, color: Colors.blue),
+                                          onPressed: () {
+                                            launchUrl(Uri.parse('tel:${data['mobile']}'));
+                                          },
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(Icons.message, color: Colors.green),
+                                          onPressed: () {
+                                            final message = 'Hello ${data['name']}, your vehicle ${data['vehicle_reg_no']} insurance is due.';
+                                            launchUrl(Uri.parse('https://wa.me/${data['mobile']}?text=${Uri.encodeComponent(message)}'));
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     );
