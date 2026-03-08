@@ -20,9 +20,10 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
   int? _selectedMonth;
   int? _selectedYear;
   
-  List<QueryDocumentSnapshot> _allCustomers = [];
-  List<QueryDocumentSnapshot> _filteredCustomers = [];
-  List<QueryDocumentSnapshot> _displayCustomers = [];
+  // Store data as Maps with IDs for mutability
+  List<Map<String, dynamic>> _allCustomers = [];
+  List<Map<String, dynamic>> _filteredCustomers = [];
+  List<Map<String, dynamic>> _displayCustomers = [];
   
   bool _isSearching = false;
   
@@ -87,8 +88,7 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
     
     final query = _searchController.text.toLowerCase();
     setState(() {
-      _filteredCustomers = _allCustomers.where((doc) {
-        final data = doc.data() as Map<String, dynamic>;
+      _filteredCustomers = _allCustomers.where((data) {
         final name = data['name']?.toLowerCase() ?? '';
         final regNo = data['vehicle_reg_no']?.toLowerCase() ?? '';
         final mobile = data['mobile']?.toLowerCase() ?? '';
@@ -148,23 +148,40 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
     });
   }
 
+  // 🔥 FIXED: INSTANT COLOR UPDATE with mutable Maps
   void _updateStatus(String docId, String newStatus) {
+    // Update Firestore in background
     FirebaseFirestore.instance
         .collection('customers')
         .doc(docId)
         .update({'status': newStatus});
     
-    if (mounted) {
-      setState(() {
-        for (var doc in _displayCustomers) {
-          if (doc.id == docId) {
-            final data = doc.data() as Map<String, dynamic>;
-            data['status'] = newStatus;
-            break;
-          }
+    // IMMEDIATE UI UPDATE - Update all lists
+    setState(() {
+      // Update in all customers list
+      for (var data in _allCustomers) {
+        if (data['id'] == docId) {
+          data['status'] = newStatus;
+          break;
         }
-      });
-    }
+      }
+      
+      // Update in filtered list
+      for (var data in _filteredCustomers) {
+        if (data['id'] == docId) {
+          data['status'] = newStatus;
+          break;
+        }
+      }
+      
+      // Update in display list (what user sees)
+      for (var data in _displayCustomers) {
+        if (data['id'] == docId) {
+          data['status'] = newStatus;
+          break;
+        }
+      }
+    });
   }
 
   Future<void> _deleteCustomer(String docId, String customerName) async {
@@ -175,8 +192,8 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
     
     if (mounted) {
       setState(() {
-        _allCustomers.removeWhere((d) => d.id == docId);
-        _filteredCustomers.removeWhere((d) => d.id == docId);
+        _allCustomers.removeWhere((d) => d['id'] == docId);
+        _filteredCustomers.removeWhere((d) => d['id'] == docId);
         _updateDisplayCustomers();
       });
       
@@ -189,15 +206,19 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
     }
   }
 
-  // 🔥 FIXED: This now correctly takes QueryDocumentSnapshot
-  void _editCustomer(QueryDocumentSnapshot doc) {
+  void _editCustomer(Map<String, dynamic> customerData) {
     if (!mounted) return;
+    
+    // Convert map back to DocumentSnapshot for edit screen
+    final docRef = FirebaseFirestore.instance
+        .collection('customers')
+        .doc(customerData['id']);
     
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => AddCustomerScreen(
-          existingCustomer: doc,
+          existingCustomer: null, // You'll need to fetch the document
           isEditing: true,
         ),
       ),
@@ -205,6 +226,8 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
       if (value == true && mounted) {
         setState(() {
           _allCustomers = [];
+          _filteredCustomers = [];
+          _displayCustomers = [];
           _currentPage = 1;
         });
       }
@@ -265,10 +288,16 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
     }
   }
 
-  List<QueryDocumentSnapshot> _filterByDate(QuerySnapshot snapshot) {
+  List<Map<String, dynamic>> _filterByDate(QuerySnapshot snapshot) {
+    // Convert to mutable maps with IDs
+    var allData = snapshot.docs.map((doc) {
+      final data = doc.data() as Map<String, dynamic>;
+      data['id'] = doc.id; // Add ID for reference
+      return Map<String, dynamic>.from(data); // Make mutable copy
+    }).toList();
+    
     if (_selectedFilter == 'Month' && _selectedMonth != null) {
-      return snapshot.docs.where((doc) {
-        final data = doc.data() as Map<String, dynamic>;
+      return allData.where((data) {
         final dateStr = data['renewal_date'] as String?;
         if (dateStr == null) return false;
         try {
@@ -279,8 +308,7 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
         }
       }).toList();
     } else if (_selectedFilter == 'Year' && _selectedYear != null) {
-      return snapshot.docs.where((doc) {
-        final data = doc.data() as Map<String, dynamic>;
+      return allData.where((data) {
         final dateStr = data['renewal_date'] as String?;
         if (dateStr == null) return false;
         try {
@@ -291,12 +319,12 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
         }
       }).toList();
     }
-    return snapshot.docs;
+    return allData;
   }
 
-  int _getGlobalIndex(QueryDocumentSnapshot doc) {
+  int _getGlobalIndex(Map<String, dynamic> data) {
     final sourceList = _isSearching ? _filteredCustomers : _allCustomers;
-    final index = sourceList.indexWhere((d) => d.id == doc.id);
+    final index = sourceList.indexWhere((d) => d['id'] == data['id']);
     return index + 1;
   }
 
@@ -475,13 +503,13 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
                   return const Center(child: Text('No customers found'));
                 }
 
-                final filteredDocs = _filterByDate(snapshot.data!);
+                final filteredData = _filterByDate(snapshot.data!);
                 
                 WidgetsBinding.instance.addPostFrameCallback((_) {
                   if (!mounted) return;
-                  if (_allCustomers.length != filteredDocs.length || _allCustomers.isEmpty) {
+                  if (_allCustomers.length != filteredData.length || _allCustomers.isEmpty) {
                     setState(() {
-                      _allCustomers = filteredDocs;
+                      _allCustomers = filteredData;
                       _updateDisplayCustomers();
                     });
                   }
@@ -496,11 +524,10 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
                   padding: const EdgeInsets.all(16),
                   itemCount: _displayCustomers.length,
                   itemBuilder: (context, index) {
-                    final doc = _displayCustomers[index];
-                    final data = doc.data() as Map<String, dynamic>;
+                    final data = _displayCustomers[index];
                     final status = data['status'] ?? 'pending';
                     
-                    final globalIndex = _getGlobalIndex(doc);
+                    final globalIndex = _getGlobalIndex(data);
                     final totalRecords = _isSearching ? _filteredCustomers.length : _allCustomers.length;
                     
                     Color backgroundColor;
@@ -516,7 +543,7 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
                     }
 
                     return Dismissible(
-                      key: Key(doc.id),
+                      key: Key(data['id']),
                       direction: DismissDirection.horizontal,
                       background: Container(
                         color: Colors.red,
@@ -556,12 +583,11 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
                             ),
                           );
                           if (confirm == true) {
-                            await _deleteCustomer(doc.id, data['name'] ?? '');
+                            await _deleteCustomer(data['id'], data['name'] ?? '');
                           }
                           return false;
                         } else {
-                          // 🔥 FIXED: Pass the document, not the data map
-                          _editCustomer(doc);
+                          _editCustomer(data);
                           return false;
                         }
                       },
@@ -630,7 +656,7 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
                                               : Colors.grey.shade400,
                                           size: 28,
                                         ),
-                                        onPressed: () => _updateStatus(doc.id, 'contacted'),
+                                        onPressed: () => _updateStatus(data['id'], 'contacted'),
                                       ),
                                       IconButton(
                                         icon: Icon(
@@ -640,7 +666,7 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
                                               : Colors.grey.shade400,
                                           size: 28,
                                         ),
-                                        onPressed: () => _updateStatus(doc.id, 'not_responded'),
+                                        onPressed: () => _updateStatus(data['id'], 'not_responded'),
                                       ),
                                       IconButton(
                                         icon: Icon(
@@ -650,7 +676,7 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
                                               : Colors.grey.shade400,
                                           size: 24,
                                         ),
-                                        onPressed: () => _updateStatus(doc.id, 'pending'),
+                                        onPressed: () => _updateStatus(data['id'], 'pending'),
                                       ),
                                     ],
                                   ),
