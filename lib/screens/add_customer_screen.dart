@@ -37,22 +37,36 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
   @override
   void initState() {
     super.initState();
-    if (widget.isEditing && widget.existingCustomer != null) {
-      final data = widget.existingCustomer!.data() as Map<String, dynamic>;
-      _nameController.text = data['name'] ?? '';
-      _emailController.text = data['email'] ?? '';
-      _mobileController.text = data['mobile'] ?? '';
-      _regNoController.text = data['vehicle_reg_no'] ?? '';
-      _chassisNoController.text = data['chassis_no'] ?? '';
-      _doorNoController.text = data['door_no'] ?? '';
-      _streetController.text = data['street'] ?? '';
-      _districtController.text = data['district'] ?? '';
-      _stateController.text = data['state'] ?? '';
-      if (data['issue_date'] != null) {
-        _issueDate = DateTime.parse(data['issue_date']);
-      }
-      if (data['renewal_date'] != null) {
-        _renewalDate = DateTime.parse(data['renewal_date']);
+    print('🔍 AddCustomerScreen initState - isEditing: ${widget.isEditing}');
+    
+    // SAFE: Load data only if editing and customer exists
+    if (widget.isEditing) {
+      if (widget.existingCustomer != null) {
+        print('✅ Loading existing customer data');
+        try {
+          final data = widget.existingCustomer!.data() as Map<String, dynamic>;
+          _nameController.text = data['name'] ?? '';
+          _emailController.text = data['email'] ?? '';
+          _mobileController.text = data['mobile'] ?? '';
+          _regNoController.text = data['vehicle_reg_no'] ?? '';
+          _chassisNoController.text = data['chassis_no'] ?? '';
+          _doorNoController.text = data['door_no'] ?? '';
+          _streetController.text = data['street'] ?? '';
+          _districtController.text = data['district'] ?? '';
+          _stateController.text = data['state'] ?? '';
+          
+          if (data['issue_date'] != null) {
+            _issueDate = DateTime.parse(data['issue_date']);
+          }
+          if (data['renewal_date'] != null) {
+            _renewalDate = DateTime.parse(data['renewal_date']);
+          }
+          print('✅ Data loaded successfully');
+        } catch (e) {
+          print('❌ Error loading customer data: $e');
+        }
+      } else {
+        print('⚠️ Warning: isEditing=true but existingCustomer is null');
       }
     }
   }
@@ -106,8 +120,12 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
     });
   }
 
+  // 🔥 FIXED: Null-safe save function with proper checks
   Future<void> _saveCustomer() async {
+    // Validate form
     if (!_formKey.currentState!.validate()) return;
+    
+    // Check renewal date
     if (_renewalDate == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select renewal date'), backgroundColor: Colors.orange),
@@ -117,6 +135,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
     
     setState(() => _isSaving = true);
 
+    // Prepare data (all fields are null-safe)
     final customerData = {
       'name': _nameController.text,
       'email': _emailController.text.isNotEmpty ? _emailController.text : null,
@@ -136,41 +155,73 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
 
     try {
       if (widget.isEditing) {
+        // 🔥 CRITICAL FIX: Check if existingCustomer is null
+        print('🔍 Attempting to update customer');
+        
+        if (widget.existingCustomer == null) {
+          print('❌ ERROR: existingCustomer is null during edit!');
+          throw Exception('Cannot update: Customer data is missing');
+        }
+        
+        print('✅ Updating customer with ID: ${widget.existingCustomer!.id}');
+        
         await FirebaseFirestore.instance
             .collection('customers')
             .doc(widget.existingCustomer!.id)
             .update(customerData);
+            
+        if (!mounted) return;
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Customer updated successfully'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 1),
+          ),
+        );
+        print('✅ Customer updated successfully');
       } else {
+        print('🔍 Adding new customer');
         await FirebaseFirestore.instance
             .collection('customers')
             .add(customerData);
+            
+        if (!mounted) return;
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Customer added successfully'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 1),
+          ),
+        );
+        print('✅ Customer added successfully');
       }
 
-      if (!mounted) return;
-
-      // Show success message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(widget.isEditing ? 'Customer updated successfully' : 'Customer added successfully'),
-          backgroundColor: Colors.green,
-          duration: const Duration(seconds: 1),
-        ),
-      );
-
-      // Clear form and stay on same screen
+      // Clear form after successful save
       _clearForm();
       
-      setState(() {
-        _isSaving = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
 
     } catch (e) {
+      print('❌ Error in _saveCustomer: $e');
+      
       if (!mounted) return;
       
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: ${e.toString()}'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text('Error: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
       );
-      setState(() => _isSaving = false);
+      
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
     }
   }
 
