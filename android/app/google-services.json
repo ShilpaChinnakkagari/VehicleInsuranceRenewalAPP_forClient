@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "181198666084",
+    "project_id": "vehiclerenewalnew",
+    "storage_bucket": "vehiclerenewalnew.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:181198666084:android:9c6feda7784284aaa1a271",
+        "android_client_info": {
+          "package_name": "com.cretcom.vehiclerenewal"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "181198666084-32vv3k798rc6im8u472ibl8fltghetl2.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.cretcom.vehiclerenewal",
+            "certificate_hash": "0a0a5470d42dec2179fe9689b4cc5028ee6eb24c"
+          }
+        },
+        {
+          "client_id": "181198666084-6agg9vkm42mspddk5jq0s3j69ncd9dpo.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBKQXwmz6kJBHB35NJMZgmoL6TEJ1TsxaQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "181198666084-6agg9vkm42mspddk5jq0s3j69ncd9dpo.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "181198666084-vse2homl64vm06bro6u05r43bvjnj8jg.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.cretcom.vehiclerenewalNew"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
