@@ -25,6 +25,9 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
   List<Map<String, dynamic>> _filteredCustomers = [];
   List<Map<String, dynamic>> _displayCustomers = [];
   
+  // Store original documents for editing
+  Map<String, DocumentSnapshot> _documents = {};
+  
   bool _isSearching = false;
   
   int _currentPage = 1;
@@ -148,33 +151,26 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
     });
   }
 
-  // 🔥 FIXED: INSTANT COLOR UPDATE with mutable Maps
+  // 🔥 INSTANT COLOR UPDATE
   void _updateStatus(String docId, String newStatus) {
-    // Update Firestore in background
     FirebaseFirestore.instance
         .collection('customers')
         .doc(docId)
         .update({'status': newStatus});
     
-    // IMMEDIATE UI UPDATE - Update all lists
     setState(() {
-      // Update in all customers list
       for (var data in _allCustomers) {
         if (data['id'] == docId) {
           data['status'] = newStatus;
           break;
         }
       }
-      
-      // Update in filtered list
       for (var data in _filteredCustomers) {
         if (data['id'] == docId) {
           data['status'] = newStatus;
           break;
         }
       }
-      
-      // Update in display list (what user sees)
       for (var data in _displayCustomers) {
         if (data['id'] == docId) {
           data['status'] = newStatus;
@@ -194,6 +190,7 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
       setState(() {
         _allCustomers.removeWhere((d) => d['id'] == docId);
         _filteredCustomers.removeWhere((d) => d['id'] == docId);
+        _documents.remove(docId);
         _updateDisplayCustomers();
       });
       
@@ -206,19 +203,26 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
     }
   }
 
-  void _editCustomer(Map<String, dynamic> customerData) {
+  // 🔥 FIXED: Edit using stored DocumentSnapshot
+  void _editCustomer(String docId) {
     if (!mounted) return;
     
-    // Convert map back to DocumentSnapshot for edit screen
-    final docRef = FirebaseFirestore.instance
-        .collection('customers')
-        .doc(customerData['id']);
+    final doc = _documents[docId];
+    if (doc == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Error: Customer document not found'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
     
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => AddCustomerScreen(
-          existingCustomer: null, // You'll need to fetch the document
+          existingCustomer: doc,
           isEditing: true,
         ),
       ),
@@ -228,6 +232,7 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
           _allCustomers = [];
           _filteredCustomers = [];
           _displayCustomers = [];
+          _documents.clear();
           _currentPage = 1;
         });
       }
@@ -289,11 +294,16 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
   }
 
   List<Map<String, dynamic>> _filterByDate(QuerySnapshot snapshot) {
+    // Store documents for editing
+    for (var doc in snapshot.docs) {
+      _documents[doc.id] = doc;
+    }
+    
     // Convert to mutable maps with IDs
     var allData = snapshot.docs.map((doc) {
       final data = doc.data() as Map<String, dynamic>;
-      data['id'] = doc.id; // Add ID for reference
-      return Map<String, dynamic>.from(data); // Make mutable copy
+      data['id'] = doc.id;
+      return Map<String, dynamic>.from(data);
     }).toList();
     
     if (_selectedFilter == 'Month' && _selectedMonth != null) {
@@ -587,7 +597,8 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
                           }
                           return false;
                         } else {
-                          _editCustomer(data);
+                          // 🔥 FIXED: Pass ID to edit
+                          _editCustomer(data['id']);
                           return false;
                         }
                       },
