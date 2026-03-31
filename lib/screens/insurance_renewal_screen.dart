@@ -20,15 +20,14 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
   int? _selectedMonth;
   int? _selectedYear;
   
-  // Store data as Maps with IDs for mutability
   List<Map<String, dynamic>> _allCustomers = [];
   List<Map<String, dynamic>> _filteredCustomers = [];
   List<Map<String, dynamic>> _displayCustomers = [];
   
-  // Store original documents for editing
   Map<String, DocumentSnapshot> _documents = {};
   
   bool _isSearching = false;
+  bool _isLoading = true;
   
   int _currentPage = 1;
   int _itemsPerPage = 10;
@@ -73,6 +72,8 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
       setState(() {
         _selectedYear = null;
         _currentPage = 1;
+        _allCustomers = [];
+        _isLoading = true;
       });
       return;
     }
@@ -82,6 +83,8 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
       setState(() {
         _selectedYear = year;
         _currentPage = 1;
+        _allCustomers = [];
+        _isLoading = true;
       });
     }
   }
@@ -151,7 +154,6 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
     });
   }
 
-  // 🔥 INSTANT COLOR UPDATE
   void _updateStatus(String docId, String newStatus) {
     FirebaseFirestore.instance
         .collection('customers')
@@ -203,7 +205,6 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
     }
   }
 
-  // 🔥 FIXED: Edit using stored DocumentSnapshot
   void _editCustomer(String docId) {
     if (!mounted) return;
     
@@ -234,6 +235,7 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
           _displayCustomers = [];
           _documents.clear();
           _currentPage = 1;
+          _isLoading = true;
         });
       }
     });
@@ -249,6 +251,8 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
           _selectedFilter = label;
           _selectedMonth = null;
           _currentPage = 1;
+          _allCustomers = [];
+          _isLoading = true;
         });
       },
       backgroundColor: Colors.grey.shade200,
@@ -285,6 +289,14 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
             .orderBy('renewal_date', descending: true)
             .snapshots();
             
+      case 'Month':
+      case 'Year':
+        // For Month and Year, we need ALL data to filter client-side
+        return FirebaseFirestore.instance
+            .collection('customers')
+            .orderBy('renewal_date', descending: true)
+            .snapshots();
+            
       default:
         return FirebaseFirestore.instance
             .collection('customers')
@@ -306,8 +318,10 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
       return Map<String, dynamic>.from(data);
     }).toList();
     
+    // 🔥 FIX: Apply filter based on selected filter
     if (_selectedFilter == 'Month' && _selectedMonth != null) {
-      return allData.where((data) {
+      print('📅 APPLYING MONTH FILTER: month=$_selectedMonth, year=$_selectedYear');
+      var filtered = allData.where((data) {
         final dateStr = data['renewal_date'] as String?;
         if (dateStr == null) return false;
         try {
@@ -317,8 +331,12 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
           return false;
         }
       }).toList();
-    } else if (_selectedFilter == 'Year' && _selectedYear != null) {
-      return allData.where((data) {
+      print('📅 MONTH FILTER: ${filtered.length} records found');
+      return filtered;
+    } 
+    else if (_selectedFilter == 'Year' && _selectedYear != null) {
+      print('📅 APPLYING YEAR FILTER: year=$_selectedYear');
+      var filtered = allData.where((data) {
         final dateStr = data['renewal_date'] as String?;
         if (dateStr == null) return false;
         try {
@@ -328,7 +346,10 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
           return false;
         }
       }).toList();
+      print('📅 YEAR FILTER: ${filtered.length} records found');
+      return filtered;
     }
+    
     return allData;
   }
 
@@ -415,6 +436,8 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
                                 setState(() {
                                   _selectedMonth = value;
                                   _currentPage = 1;
+                                  _allCustomers = [];
+                                  _isLoading = true;
                                 });
                               },
                             ),
@@ -501,32 +524,55 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
             child: StreamBuilder<QuerySnapshot>(
               stream: _getFilteredStream(),
               builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
+                // 🔥 FIX: Only show spinner on initial load
+                if (snapshot.connectionState == ConnectionState.waiting && _isLoading && _allCustomers.isEmpty) {
                   return const Center(child: CircularProgressIndicator());
                 }
 
                 if (snapshot.hasError) {
+                  _isLoading = false;
                   return Center(child: Text('Error: ${snapshot.error}'));
                 }
 
                 if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  _isLoading = false;
+                  // Show empty state
+                  if (_allCustomers.isNotEmpty) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) {
+                        setState(() {
+                          _allCustomers = [];
+                          _displayCustomers = [];
+                          _totalItems = 0;
+                        });
+                      }
+                    });
+                  }
                   return const Center(child: Text('No customers found'));
                 }
 
+                // 🔥 FIX: Apply filter here
                 final filteredData = _filterByDate(snapshot.data!);
                 
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (!mounted) return;
-                  if (_allCustomers.length != filteredData.length || _allCustomers.isEmpty) {
-                    setState(() {
-                      _allCustomers = filteredData;
-                      _updateDisplayCustomers();
-                    });
-                  }
-                });
+                // Update display data
+                if (_allCustomers.length != filteredData.length || _allCustomers.isEmpty) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) {
+                      setState(() {
+                        _allCustomers = filteredData;
+                        _updateDisplayCustomers();
+                        _isLoading = false;
+                      });
+                    }
+                  });
+                }
+
+                if (_displayCustomers.isEmpty && !_isLoading) {
+                  return const Center(child: Text('No customers found for selected filter'));
+                }
 
                 if (_displayCustomers.isEmpty) {
-                  return const Center(child: Text('No customers on this page'));
+                  return const SizedBox.shrink();
                 }
 
                 return ListView.builder(
@@ -597,7 +643,6 @@ class _InsuranceRenewalScreenState extends State<InsuranceRenewalScreen> {
                           }
                           return false;
                         } else {
-                          // 🔥 FIXED: Pass ID to edit
                           _editCustomer(data['id']);
                           return false;
                         }
